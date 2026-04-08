@@ -6,6 +6,7 @@ import json
 import re
 import time
 import logging
+import threading
 import concurrent.futures
 from typing import Dict, List, Optional, Any
 from pdf2image import convert_from_path
@@ -20,7 +21,13 @@ from fastapi import HTTPException
 logger = logging.getLogger(__name__)
 
 # Grading token and API call counter
-_grading_stats = {"input_tokens": 0, "output_tokens": 0, "api_calls": 0}
+_grading_stats = {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "api_calls": 0,
+    "cached_input_tokens": 0,
+}
+_grading_stats_lock = threading.Lock()
 
 
 def get_grading_token_stats():
@@ -30,12 +37,51 @@ def get_grading_token_stats():
 
 def reset_grading_token_stats():
     """Reset grading token and call counters."""
-    _grading_stats["input_tokens"] = 0
-    _grading_stats["output_tokens"] = 0
-    _grading_stats["api_calls"] = 0
+    with _grading_stats_lock:
+        _grading_stats["input_tokens"] = 0
+        _grading_stats["output_tokens"] = 0
+        _grading_stats["api_calls"] = 0
+        _grading_stats["cached_input_tokens"] = 0
 
 
-def _grading_openai_generate(parts: List[Any], max_retries: int = 5) -> Optional[Any]:
+def _update_grading_usage(response: Any) -> None:
+    """Thread-safe update of grading token usage from OpenAI response."""
+    usage = getattr(response, "usage", None)
+    if not usage:
+        return
+
+    # Support both object-like and dict-like usage payloads.
+    prompt_tokens = getattr(usage, "prompt_tokens", None)
+    completion_tokens = getattr(usage, "completion_tokens", None)
+    if prompt_tokens is None and isinstance(usage, dict):
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+    if prompt_tokens is None:
+        prompt_tokens = 0
+    if completion_tokens is None:
+        completion_tokens = 0
+
+    cached_tokens = 0
+    prompt_details = getattr(usage, "prompt_tokens_details", None)
+    if prompt_details is not None:
+        cached_tokens = getattr(prompt_details, "cached_tokens", 0) or 0
+    elif isinstance(usage, dict):
+        prompt_details = usage.get("prompt_tokens_details") or {}
+        if isinstance(prompt_details, dict):
+            cached_tokens = prompt_details.get("cached_tokens", 0) or 0
+
+    with _grading_stats_lock:
+        _grading_stats["api_calls"] += 1
+        _grading_stats["input_tokens"] += int(prompt_tokens)
+        _grading_stats["output_tokens"] += int(completion_tokens)
+        _grading_stats["cached_input_tokens"] += int(cached_tokens)
+
+
+def _grading_openai_generate(
+    parts: List[Any],
+    max_retries: int = 5,
+    system_prompt: Optional[str] = None
+) -> Optional[Any]:
     """
     Call OpenAI API for grading. Updates _grading_stats (input_tokens, output_tokens, api_calls).
     parts: list of str (prompt text) or dict (image part from pil_to_part).
@@ -51,7 +97,10 @@ def _grading_openai_generate(parts: List[Any], max_retries: int = 5) -> Optional
         else:
             content_parts.append({"type": "text", "text": str(part)})
 
-    messages = [{"role": "user", "content": content_parts}]
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": content_parts})
 
     for attempt in range(max_retries):
         try:
@@ -60,10 +109,7 @@ def _grading_openai_generate(parts: List[Any], max_retries: int = 5) -> Optional
                 messages=messages,
                 max_tokens=8192,
             )
-            _grading_stats["api_calls"] += 1
-            if response.usage:
-                _grading_stats["input_tokens"] += response.usage.prompt_tokens
-                _grading_stats["output_tokens"] += response.usage.completion_tokens
+            _update_grading_usage(response)
 
             class _Response:
                 def __init__(self, text_content):
@@ -85,6 +131,9 @@ def _grading_openai_generate(parts: List[Any], max_retries: int = 5) -> Optional
 
 
 def extract_contents_from_pdf(file_path: str, max_workers: int = 5) -> str:
+    # Start of evaluation pipeline: reset once so OCR + extraction + grading all count.
+    reset_grading_token_stats()
+
     """
     Extract all handwritten text from a student's handwritten answer sheet.
     Uses parallel processing to speed up extraction while maintaining quality.
@@ -136,7 +185,11 @@ Page 2 Text:
         page_num, page = page_data
         try:
             # OpenAI: send prompt + page image for OCR
-            response = _grading_openai_generate([prompt, pil_to_part(page)])
+            page_part = pil_to_part(page, max_size=(1280, 1280), quality=55)
+            if isinstance(page_part, dict):
+                page_part.setdefault("image_url", {})
+                page_part["image_url"]["detail"] = "low"
+            response = _grading_openai_generate([prompt, page_part])
 
             content = None
             if response and getattr(response, "text", None):
@@ -394,146 +447,26 @@ def assign_marks_section(section_title: str, questions_payload: List) -> Dict:
     """
     Evaluates all questions in a section in ONE LLM call.
     """
+    system_prompt = (
+        "You are a strict school examiner. Grade only explicit student content against the provided "
+        "reference answer. No assumptions, no generosity. Empty/blank/irrelevant answer = 0. "
+        "For multi-point questions, award proportional partial marks only for clearly correct explicit points. "
+        "Return JSON only."
+    )
     prompt = f"""
-    You are a strict, rule-bound examiner evaluating a student's handwritten answer sheet.
-
 SECTION: {section_title}
+QUESTIONS:
+{json.dumps(questions_payload, ensure_ascii=False, separators=(",", ":"))}
 
----
-
-QUESTIONS TO EVALUATE:
-{json.dumps(questions_payload, indent=2)}
-
----
-
-### 🔥 OVERALL EVALUATION PRINCIPLE:
-Award marks **only for what is explicitly written by the student**, not for what they "might have meant".  
-No assumptions. No generosity. No filling gaps.
-
----
-
-## 🎯 MARKING RULES (STRICTER VERSION)
-
-Note : if the student answer is Empty or Blank ( "" ) , award 0 marks. [ VERY VERY IMPORTANT ]
-
-### 1. Zero-tolerance for missing required points  
-- If the question demands **specific items** (e.g., "herders, farmers, merchants, kings"), the answer MUST explicitly mention them.  
-- If even one required item is missing → deduct marks proportionally.
-
-### 2. Blank / Irrelevant / Incorrect → **0 marks**
-- Even partially related but off-target content = 0.
-- If the student answers only half the question (e.g., only definition, no explanation) → heavy deductions.
-
-### 3. No reward for general knowledge  
-- Marks only for content aligning with the **correct answer or textbook context**.  
-- Irrelevant extra information → **no marks**.
-
-### 4. Partial marks only for:
-- Clearly correct points **directly answering the question**.
-- Each required point contributes a **fixed fraction** of the marks.
-- Vague statements that don't show clear understanding → **0**.
-
-### 5. Specificity Required  
-- General statements like "people lived differently" or "past was different for everyone" are NOT enough for 3+ mark questions.
-- Examples, categories, and named items MUST appear for credit.
-
-### 6. Structure Matters (for long answers)
-Marks deducted for:
-- Missing introduction
-- Missing explanation
-- Missing required examples
-- No logical flow
-
-### 7. Factual accuracy required  
-- Wrong facts → zero marks for that portion.
-- Spelling errors that change meaning → deduct marks.
-- Minor spelling mistakes that do not change meaning → do not award but do not penalize heavily.
-
-### 8. No marks for repetition or fluff  
-- Rewriting the question in different words earns **no credit**.
-
----
-
-## 📌 MARKING GUIDE BY QUESTION TYPE (STRICT)
-
-### 🔸 **MCQ / One-word / Fill-in-the-Blank**
-- **Primary Check:** Does the **Option Letter** (a, b, c, d) match? If yes → Full Marks.
-- **Secondary Check:** Does the **Content** match? 
-  - **IGNORE formatting differences** (e.g., "$120~cm^2$" vs "120 cm²", "x" vs "×").
-  - If the value/meaning is identical → Full Marks.
-- Otherwise → 0 Marks.
-
----
-
-### 🔸 **Short Answer (1–3 marks)**
-Award marks ONLY if:
-- The **key phrase/term** is exactly present.
-- The explanation matches the correct answer.
-
-Penalize:
-- Missing keywords
-- Vague explanation
-- Off-topic examples
-- Incorrect definitions
-
----
-
-### 🔸 **Medium-length / Reasoning (3–4 marks)**
-Expect:
-- Clear definition + required explanation
-- All required key points
-
-Deductions for:
-- Missing examples
-- Missing second part of question
-- Partial conceptual understanding
-- Incomplete comparisons
-
----
-
-### 🔸 **Long Answer / Analytical (5–6 marks)**
-Expect:
-- Intro / definition
-- Explanation
-- Examples or points explicitly present
-- All subparts answered
-
-If ANY required component missing:
-- Deduct 1–2 marks immediately.
-
-If multiple missing:
-- Award very low marks or 0.
-
----
-
-### ⭐ **MARK DISTRIBUTION RULE (very strict):**
-For multi-point questions:
-- Each correct explicit point = (max_marks / number_of_required_points)
-- Missing point = 0 for that portion.
-- Vague/generalised point = 0.
-
----
-
-## ✔️ FINAL OUTPUT FORMAT
-You MUST return ONLY valid JSON. No markdown, no code blocks, no explanations outside the JSON.
-
-
-Return ONLY valid JSON in this format:
-
+Return ONLY this JSON:
 {{
   "evaluations": [
-    {{
-      "questionNo": "",
-      "awarded_marks": 0,
-      "remarks": ""
-    }}
+    {{"questionNo":"1","awarded_marks":0,"remarks":"..."}}
   ]
 }}
-
-IMPORTANT: Return ONLY the JSON object, no other text before or after it.
-    """
+"""
     try:
-        response = _grading_openai_generate([prompt])
+        response = _grading_openai_generate([prompt], system_prompt=system_prompt)
 
         if not response or not getattr(response, "text", None):
             return {"evaluations": []}
@@ -554,124 +487,77 @@ IMPORTANT: Return ONLY the JSON object, no other text before or after it.
         return {"evaluations": []}
 
 
-def retrieve_section_answers(section_title: str, questions: List[Dict], answer_paper: str) -> Dict:
-    """Uses Vertex AI (Gemini) once per section to extract answers for all questions."""
-    q_descriptions = []
-    q_question_no = []
-    for q in questions:
-        q_snippet = q['question'][:50] + "..." if len(q['question']) > 50 else q['question']
-        q_descriptions.append(f"Q{q['questionNo']}: {q_snippet}")
-        q_question_no.append(q['questionNo'])
+def _compile_section_title_pattern(section_title: str) -> re.Pattern:
+    """Build a flexible regex for section title matching in OCR text."""
+    normalized = re.sub(r"\s+", " ", str(section_title or "").strip())
+    escaped = re.escape(normalized).replace(r"\ ", r"\s+")
+    pattern = rf"^\s*{escaped}\s*:?\s*$|\b{escaped}\b"
+    return re.compile(pattern, flags=re.IGNORECASE | re.MULTILINE)
 
-    print(f"Section Title: {section_title}")
-    questions_summary = "\n".join(q_descriptions)
-    questions_list = ", ".join(q_question_no)
 
+def _slice_text_for_section(answer_paper: str, section_title: str, all_section_titles: List[str], max_chars: int = 12000) -> str:
+    """
+    Extract a narrow text window for a section to improve mapping quality and reduce tokens.
+    Falls back to head/tail-trimmed full text when section boundaries are unclear.
+    """
+    if not answer_paper:
+        return ""
+
+    this_pat = _compile_section_title_pattern(section_title)
+    this_match = this_pat.search(answer_paper)
+    if not this_match:
+        return answer_paper[:max_chars]
+
+    start = this_match.start()
+    end = len(answer_paper)
+    for other in all_section_titles:
+        if str(other).strip().lower() == str(section_title).strip().lower():
+            continue
+        other_match = _compile_section_title_pattern(other).search(answer_paper, this_match.end())
+        if other_match:
+            end = min(end, other_match.start())
+
+    sliced = answer_paper[start:end]
+    if len(sliced) <= max_chars:
+        return sliced
+
+    # Keep beginning and end of section where question markers commonly appear.
+    head_len = int(max_chars * 0.75)
+    tail_len = max_chars - head_len
+    return sliced[:head_len] + "\n...\n" + sliced[-tail_len:]
+
+
+def retrieve_section_answers(section_title: str, questions: List[Dict], section_text: str) -> Dict[str, str]:
+    """Retrieve answers for one section only from pre-sliced section text."""
+    question_nos = [str(q.get("questionNo", "")).strip() for q in questions]
+    question_nos = [q for q in question_nos if q]
+
+    system_prompt = (
+        "You extract answers from OCR text for exactly one section. "
+        "Map each requested questionNo to the answer written under that question in THIS section only. "
+        "If missing, return empty string. Preserve line breaks with \\n. Return JSON only."
+    )
     prompt = f"""
-You are an expert exam evaluator extracting answers from a student's handwritten script.
+SECTION_TITLE: {section_title}
+QUESTION_NOS: {json.dumps(question_nos, ensure_ascii=False, separators=(",", ":"))}
 
-### CONTEXT
-The student's answer sheet contains multiple sections (e.g., Section A, Section B, or Section 1, 2).
-Question numbers (Q1, Q2...) **repeat** in every section.
+SECTION_TEXT:
+{section_text}
 
-
-### YOUR GOAL
-- **You MUST first locate the exact section header:** (HIGH PRIORITY)
-    "{section_title}"
-
-- **The answer sheet format will typically look like:**
-    Section X
-    Q1. ....
-    Q2. ....
-    Q3. ....
-
-You are NOT allowed to extract any answer unless you have clearly identified the correct section header.
-
-- Follow the below steps to extract the answers:
-    **STEP 1 — LOCATE SECTION (MANDATORY)**
-    1. Scan the entire handwritten text.
-    2. Find the exact match for:
-        Section Title: "{section_title}"
-    3. Extraction MUST start only AFTER this header.
-    4. STOP extraction when:
-    - A new section header appears
-    - OR the document ends
-
-    Anything outside this section must be completely ignored.
-
-    -----------------------------------------------
-
-    **STEP 2 — MAP QUESTIONS WITHIN THAT SECTION ONLY**
-
-    Inside the identified section:
-
-    - Question numbers (Q1, Q2, Q3...) may repeat in other sections.
-    - Only match question numbers that appear AFTER the correct section header.
-    - Do NOT extract Q1 from another section.
-    - Do NOT guess from context outside the section.
-
-    Strict mapping rule:
-    Match:
-        Q1 → Answer written under Q1 in THIS section only
-        Q2 → Answer written under Q2 in THIS section only
-
-    --------------------------------------------------
-
---------------------------------------------------
-### INPUT DATA
-
-Section Title:
-"{section_title}"
-
-Questions List:
-{questions_list}
-
---------------------------------------------------
-
-### HANDWRITTEN CONTENT
----
-{answer_paper}
----
---------------------------------------------------
-
-
-### EXTRACTION RULES
-1. **Handle Duplicate Numbers:** Do NOT extract "Q1" from Section 2 if I am asking for "Q1" from Section 1. Use the context of the answer content to disambiguate.
-2. **LaTeX Formatting:** - If the answer contains math, format it as LaTeX enclosed in `$ ... $`.
-   - **CRITICAL:** Use DOUBLE backslashes for commands. Example: Write `$60 \\\\text{{ km/h}}$` (not `\\text`).
-   - **Multiplication:** Write `$a \\\\times b$` (produces $\times$), NOT `$a \times b$`.
-   - **Text:** Write `$60 \\\\text{{ km/h}}$`.
-   - **Fractions:** Write `$\\\\frac{{1}}{{2}}$`.
-   - If the student wrote "atimesb", correct it to `$a \\\\times b$` if it clearly means multiplication.
-3. **Precision:** Extract exactly what is written. Do not correct spelling. If an answer is missing, return an empty string.
-4. **PRESERVE NEWLINES (CRITICAL):** - If the answer is written across multiple lines (e.g., steps in a math problem, or points in a theory answer), **you MUST use `\\n`** in the JSON string to represent those line breaks.
-   - **DO NOT** flatten the text into a single line.
-   - Example: "Step 1: Formula\\nStep 2: Substitution\\nStep 3: Answer"
-
-Return **only valid JSON**:
+Return ONLY:
 {{
-  "sectionTitle": "{section_title}",
-  "answers": [
-    {{ "questionNo": "1", "studentAnswer": "..." }},
-    {{ "questionNo": "2", "studentAnswer": "..." }}
-  ]
+  "sectionTitle":"{section_title}",
+  "answers":[{{"questionNo":"1","studentAnswer":"..."}}]
 }}
-
-- Do NOT wrap the JSON in markdown.
-- Do NOT add explanations.
-- Do NOT include ```json blocks.
-- Return ONLY raw JSON.
 """
 
     try:
-        # OpenAI: text-only call for section answer extraction
-        response = _grading_openai_generate([prompt])
-
+        response = _grading_openai_generate([prompt], system_prompt=system_prompt)
         text = None
         if response and getattr(response, "text", None):
             text = response.text.strip()
         if not text:
-            logger.warning("Empty response from OpenAI for answer extraction")
+            logger.warning("Empty response from OpenAI for section answer extraction: %s", section_title)
             return {}
 
         match = re.search(r"\{[\s\S]*\}", text)
@@ -679,23 +565,16 @@ Return **only valid JSON**:
             text = match.group(0)
 
         text = clean_json_string(text)
-        
         data = json.loads(text)
-        cleaned_answers = {}
+        cleaned_answers: Dict[str, str] = {}
         for a in data.get("answers", []):
+            q_no = str(a.get("questionNo", "")).strip()
             raw_ans = a.get("studentAnswer", "")
-            cleaned_answers[a["questionNo"]] = clean_latex_content(raw_ans)
-
+            if q_no:
+                cleaned_answers[q_no] = clean_latex_content(raw_ans)
         return cleaned_answers
-
-    except json.JSONDecodeError as e:
-        logger.error(
-            f"Invalid JSON returned by LLM in retrieve_section_answers. Full response:\n"
-            f"{text if 'text' in locals() else 'No response'}"
-        )
-        return {}
     except Exception as e:
-        logger.error(f"Error retrieving section answers: {e}", exc_info=True)
+        logger.error("Error retrieving answers for section '%s': %s", section_title, e, exc_info=True)
         return {}
 
 
@@ -777,15 +656,19 @@ def analyze_chapters_with_llm(report: Dict) -> Dict:
                 "study_plan": []
             }
         }
-    
+
 
 def evaluate_answers(question_paper: Dict, answer_paper: str) -> Dict:
-
-    reset_grading_token_stats()
-
     result = []
     total_marks = 0
     obtained_marks = 0
+    all_section_titles = [
+        section.get('sectionTitle') or section.get('sectionName') or section.get('title') or "Untitled Section"
+        for section in question_paper.get('sections', [])
+    ]
+    section_count = max(1, len(all_section_titles))
+    # Keep extraction prompts inside a bounded overall budget to avoid very high input token usage.
+    per_section_char_budget = min(12000, max(6000, 48000 // section_count))
 
     for section in question_paper['sections']:
 
@@ -798,18 +681,20 @@ def evaluate_answers(question_paper: Dict, answer_paper: str) -> Dict:
 
         section_result = {"sectionTitle": sec_title, "questions": []}
 
-        answers_map = retrieve_section_answers(
+        section_text = _slice_text_for_section(
+            answer_paper,
             sec_title,
-            section.get('questions', []),
-            answer_paper
+            all_section_titles,
+            max_chars=per_section_char_budget
         )
+        answers_map = retrieve_section_answers(sec_title, section.get('questions', []), section_text)
 
         questions_payload = []
         question_meta_map = {}
 
         for q in section.get('questions', []):
 
-            student_ans = answers_map.get(q['questionNo'], "")
+            student_ans = answers_map.get(str(q.get('questionNo', '')), "")
 
             correct_ans = clean_latex_content(
                 q.get('correct answer')
@@ -874,6 +759,7 @@ def evaluate_answers(question_paper: Dict, answer_paper: str) -> Dict:
         "token_usage": {
             "input_tokens": stats["input_tokens"],
             "output_tokens": stats["output_tokens"],
+            "cached_input_tokens": stats.get("cached_input_tokens", 0),
             "total_tokens": stats["input_tokens"] + stats["output_tokens"],
             "api_calls": stats["api_calls"],
         },
@@ -887,6 +773,7 @@ def evaluate_answers(question_paper: Dict, answer_paper: str) -> Dict:
     final_report["token_usage"] = {
         "input_tokens": _grading_stats["input_tokens"],
         "output_tokens": _grading_stats["output_tokens"],
+        "cached_input_tokens": _grading_stats.get("cached_input_tokens", 0),
         "total_tokens": _grading_stats["input_tokens"] + _grading_stats["output_tokens"],
         "api_calls": _grading_stats["api_calls"],
     }
@@ -899,7 +786,6 @@ def evaluate_answers(question_paper: Dict, answer_paper: str) -> Dict:
     )
 
     return final_report
-
 
 def generate_semester_report(request: SemesterReportRequest):
     try:
