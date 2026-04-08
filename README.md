@@ -71,9 +71,9 @@ backend/
 
 ### 1. Prerequisites
 
-- Python 3.10+
+- Python 3.12
 - Qdrant Cloud Account (Free Tier is sufficient)
-- Google Cloud Project (Vertex AI) OR Google AI Studio API Key.
+- Groq API Key / Open AI API key
 
 ### 2. Installation
 
@@ -104,14 +104,9 @@ ENVIRONMENT=development
 QDRANT_URL=https://<your-cluster>.us-east4-0.gcp.cloud.qdrant.io:6333
 QDRANT_API_KEY=<your-qdrant-api-key>
 
-# Google AI (Gemini)
-# Option A: Vertex AI (Recommended for Prod)
-GOOGLE_APPLICATION_CREDENTIALS="path/to/service-account.json"
-PROJECT_ID="your-gcp-project-id"
-LOCATION="us-central1"
-
-# Option B: AI Studio (Easier for Dev)
-GOOGLE_API_KEY="your-gemini-api-key"
+OPENAI_API_KEY =
+    OR
+GROQ_API_KEY = 
 
 # Model Config
 EMBEDDINGS_MODEL_NAME="sentence-transformers/all-MiniLM-L6-v2"
