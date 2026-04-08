@@ -41,38 +41,9 @@ def reset_token_stats():
     _token_counter["output_tokens"] = 0
 
 
-# ============================================================================
-# GEMINI FUNCTIONS (COMMENTED OUT - REPLACED WITH OPENAI)
-# ============================================================================
-
-# def pil_to_part(image, max_size=(1600, 1600), quality=70):
-#     """Convert PIL Image to Gemini Part with optimized compression and resizing"""
-#     try:
-#         if image is None:
-#             raise ValueError("Image cannot be None")
-#         
-#         if image.size[0] > max_size[0] or image.size[1] > max_size[1]:
-#             image.thumbnail(max_size, Image.Resampling.LANCZOS)
-#         
-#         buffer = io.BytesIO()
-#         image.save(buffer, format="JPEG", quality=quality, optimize=True)
-#         image_bytes = buffer.getvalue()
-#         
-#         # google-genai SDK: Use inline_data with Blob for image parts
-#         return types.Part(
-#             inline_data=types.Blob(
-#                 data=image_bytes,
-#                 mime_type="image/jpeg"
-#             )
-#         )
-#     except Exception as e:
-#         logger.error(f"Error converting PIL image to Gemini Part: {e}", exc_info=True)
-#         raise
-
-
-# ============================================================================
-# OPENAI FUNCTIONS (NEW - REPLACES GEMINI)
-# ============================================================================
+# =============================
+# OPENAI FUNCTIONS 
+# =============================
 
 def pil_to_base64(image, max_size=(1600, 1600), quality=70):
     """Convert PIL Image to base64 string for OpenAI API with optimized compression and resizing"""
@@ -108,48 +79,6 @@ def pil_to_part(image, max_size=(1600, 1600), quality=70):
             "url": f"data:image/jpeg;base64,{base64_image}"
         }
     }
-
-
-# def safe_vertex_generate(parts, **kwargs):
-#     """Optimized Gemini generation with faster retry logic and connection optimization"""
-#     client = get_gemini_client()
-#     retries = 5
-#     for attempt in range(retries):
-#         try:
-#             if not parts:
-#                 raise ValueError("Parts cannot be empty")
-#             
-#             # Build content from parts - parts can be strings or Part objects
-#             content = []
-#             for part in parts:
-#                 if isinstance(part, str):
-#                     content.append(types.Part(text=part))
-#                 elif isinstance(part, types.Part):
-#                     content.append(part)
-#                 else:
-#                     # Assume it's already a Part-like object
-#                     content.append(part)
-#             
-#             # Generate content using the new SDK
-#             response = client.models.generate_content(
-#                 model=MODEL_NAME,
-#                 contents=content,
-#                 config=types.GenerateContentConfig(max_output_tokens=8192)
-#             )
-#             return response
-#         except Exception as e:
-#             error_str = str(e).lower()
-#             wait_time = min(2 * (2 ** attempt), 30)
-#
-#             if "429" in error_str or "quota" in error_str or "rate limit" in error_str:
-#                 logger.warning(f"Quota exceeded (Attempt {attempt+1}/{retries}). Waiting 30s...")
-#                 time.sleep(30)
-#             else:
-#                 logger.warning(f"Gemini error (Attempt {attempt+1}/{retries}): {e}. Retrying in {wait_time}s...")
-#                 time.sleep(wait_time)
-#                 
-#     logger.error(f"Gemini generation failed after {retries} attempts.")
-#     return None
 
 
 def safe_vertex_generate(parts, **kwargs):
@@ -233,51 +162,6 @@ def safe_vertex_generate(parts, **kwargs):
                 
     logger.error(f"OpenAI generation failed after {retries} attempts.")
     return None
-
-
-# async def safe_vertex_generate_async(parts, **kwargs):
-#     """Async version of Gemini generation with retry logic"""
-#     client = get_gemini_client()
-#     retries = 5
-#     for attempt in range(retries):
-#         try:
-#             if not parts:
-#                 raise ValueError("Parts cannot be empty")
-#             
-#             # Build content from parts
-#             content = []
-#             for part in parts:
-#                 if isinstance(part, str):
-#                     content.append(types.Part(text=part))
-#                 elif isinstance(part, types.Part):
-#                     content.append(part)
-#                 else:
-#                     content.append(part)
-#             
-#             # Run blocking call in executor to make it async
-#             loop = asyncio.get_event_loop()
-#             response = await loop.run_in_executor(
-#                 None,
-#                 lambda: client.models.generate_content(
-#                     model=MODEL_NAME,
-#                     contents=content,
-#                     config=types.GenerateContentConfig(max_output_tokens=8192)
-#                 )
-#             )
-#             return response
-#         except Exception as e:
-#             error_str = str(e).lower()
-#             wait_time = min(2 * (2 ** attempt), 30)
-#
-#             if "429" in error_str or "quota" in error_str or "rate limit" in error_str:
-#                 logger.warning(f"Quota exceeded (Attempt {attempt+1}/{retries}). Waiting 30s...")
-#                 await asyncio.sleep(30)
-#             else:
-#                 logger.warning(f"Gemini error (Attempt {attempt+1}/{retries}): {e}. Retrying in {wait_time}s...")
-#                 await asyncio.sleep(wait_time)
-#                 
-#     logger.error(f"Gemini generation failed after {retries} attempts.")
-#     return None
 
 
 async def safe_vertex_generate_async(parts, **kwargs):
@@ -366,9 +250,6 @@ async def safe_vertex_generate_async(parts, **kwargs):
                 
     logger.error(f"OpenAI generation failed after {retries} attempts.")
     return None
-
-
-# XML parsing functions are imported from utils
 
 
 def clean_page_content(text: str) -> str:

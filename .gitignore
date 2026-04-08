@@ -1,0 +1,102 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# =========================
+# Virtual Environments
+# =========================
+venv/
+.venv/
+.env/
+.venv/
+env/
+ENV/
+
+# =========================
+# Environment / Secrets
+# =========================
+.env
+.env.*
+*.env
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Build / Distribution
+# =========================
+build/
+dist/
+*.egg-info/
+
+# =========================
+# Testing / Coverage
+# =========================
+.pytest_cache/
+.coverage
+htmlcov/
+
+# =========================
+# IDE / OS
+# =========================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# =========================
+# Temporary Files
+# =========================
+*.tmp
+*.bak
+*.swp
+*.cache
+
+# =========================
+# Model / Data Artifacts
+# =========================
+*.pt
+*.pth
+*.onnx
+*.h5
+*.ckpt
+
+# =========================
+# PDFs / Generated Files
+# =========================
+*.pdf
+*.png
+*.jpg
+*.jpeg
+
+# =========================
+# FAISS / Vector DB
+# =========================
+faiss_index/
+*.faiss
+*.index
+
+# =========================
+# HuggingFace Cache
+# =========================
+.cache/
+.huggingface/
+
+# =========================
+# Node (if used)
+# =========================
+node_modules/
+
+uv.lock
+.python-version

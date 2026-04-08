@@ -168,57 +168,6 @@ def generate_realistic_image(prompt: str) -> Dict[str, str]:
         logger.error(f"❌ Image Generation failed: {e}")
         logger.info("🔁 Falling back to SVG generation")
         return generate_svg_visual(prompt)
-# def generate_realistic_image(prompt: str) -> Dict[str, str]:
-#     """
-#     Generates a realistic image using Gemini 2.5 Flash (Image Mode).
-#     """
-#     try:
-#         # 1. Initialize Client (using your specific project)
-#         # We initialize inside the function to ensure auth is ready when called
-#         PROJECT_ID = "gen-lang-client-0238295665"
-#         LOCATION = "global"
-#         client = genai_sdk.Client(
-#             vertexai=True,
-#             project=PROJECT_ID,
-#             location=LOCATION,
-#         )
-        
-#         logger.info(f"🎨 Generating image with Gemini for prompt: '{prompt}'")
-
-#         # 2. Call the Model
-#         response = client.models.generate_content(
-#             model="gemini-2.5-flash-image", # Or "gemini-2.0-flash-exp" if 2.5 isn't available yet in your region
-#             contents=f"Draw an educational diagram, white background, clear visibility: {prompt}",
-#             config=GenerateContentConfig(
-#                 response_modalities=["IMAGE"],
-#                 candidate_count=1,
-#             ),
-#         )
-
-#         if response.candidates:
-#             for part in response.candidates[0].content.parts:
-#                 if hasattr(part, "inline_data") and part.inline_data:
-#                     # Get raw bytes
-#                     img_bytes = part.inline_data.data
-#                     mime_type = part.inline_data.mime_type or "image/png"
-                    
-#                     # Convert to Base64 string for frontend
-#                     b64_data = base64.b64encode(img_bytes).decode('utf-8')
-#                     # print(f"Response of Image_Visual: {b64_data}")
-                    
-#                     logger.info("✅ Image generated successfully via Google GenAI SDK")
-#                     return {
-#                         "type": "image", 
-#                         "content": f"data:{mime_type};base64,{b64_data}"
-#                     }
-
-#         logger.warning("⚠️ No image data found in Gemini response.")
-#         return generate_svg_visual(prompt) # Fallback to SVG
-
-#     except Exception as e:
-#         logger.error(f"❌ Image Generation failed: {e}")
-#         # Fallback to SVG so the user still sees something
-        # return generate_svg_visual(prompt)
 
 def process_paper_visuals(exam_paper: Dict) -> Dict:
     """
@@ -245,13 +194,8 @@ def process_paper_visuals(exam_paper: Dict) -> Dict:
                 if vis_annot and vis_annot.get("required") is True:
                     prompt = vis_annot.get("prompt")
                     v_type = vis_annot.get("type", "svg")
-                    
-                    # print(f"BEFORE Prompt for {question} : {prompt}")
-                    # print(correct_answers)
-                    # if correct_answers:
-                    #     prompt += f"\n\nCorrect Answer: {correct_answers}"
 
-                    print(f"AFTER Prompt for {question} : {prompt}")
+                    # print(f"AFTER Prompt for {question} : {prompt}")
                     print(f"Type for {question} : {v_type}")
                     
                     if prompt:
@@ -724,16 +668,6 @@ def get_context_from_request(
                 query_response = llm.invoke(query_generation_prompt)
                 generated_queries = json.loads(clean_json_string(query_response.content))
                 
-
-                # # Use Qdrant search with user_id filtering
-                # docs = search_similar_chunks(
-                #     client=client,
-                #     query_text=query,
-                #     embeddings=embeddings,
-                #     user_id=user_id,
-                #     k=chunks_per_chapter,
-                #     additional_filters=additional_filters
-                # )
                 chapter_docs = []
 
                 for query in generated_queries:
@@ -750,37 +684,6 @@ def get_context_from_request(
                         chapter_docs.extend(docs)
 
                 
-                # unique_docs = {}
-                # for d in chapter_docs:
-                #     chunk_id = d.metadata.get("chunk_index")
-                #     if chunk_id:
-                #         unique_docs[chunk_id] = d
-
-                # docs = list(unique_docs.values())
-
-                # filtered_docs = []
-
-                # for d in docs:
-                #     chunk_id = d.metadata.get("chunk_index")
-                #     if chunk_id not in used_chunk_ids:
-                #         filtered_docs.append(d)
-
-                # if len(filtered_docs) > chunks_per_chapter:
-                #     filtered_docs = random.sample(filtered_docs, chunks_per_chapter)
-
-                # for d in filtered_docs:
-                #     chunk_id = d.metadata.get("chunk_index")
-                #     if chunk_id:
-                #         used_chunk_ids.add(chunk_id)
-
-                # for d in filtered_docs:
-                #     print(f"[Source: Chapter {chap_name}]\n{d.page_content}")
-                #     all_contexts.append(
-                #         f"[Source: Chapter {chap_name}]\n{d.page_content}"
-                #     )
-
-                # docs = random.sample(docs, min(15, len(docs)))
-                
                 if chapter_docs:
                     logger.info(f"Retrieved {len(chapter_docs)} chunks for Chapter {chap_name} (id: {chap_id})")
                     for d in chapter_docs:
@@ -789,14 +692,6 @@ def get_context_from_request(
                 else:
                     logger.warning(f"Zero docs for Chapter {chap_name} (id: {chap_id}). Check metadata or extraction.")
                 
-                # if docs:
-                #     logger.info(f"Retrieved {len(docs)} chunks for Chapter {chap_name} (id: {chap_id})")
-                #     for d in docs:
-                #         print(f"[Source: Chapter {chap_name}]\n{d.page_content}")
-                #         all_contexts.append(f"[Source: Chapter {chap_name}]\n{d.page_content}")
-                # else:
-                #     logger.warning(f"Zero docs for Chapter {chap_name} (id: {chap_id}). Check metadata or extraction.")
-
             except Exception as e:
                 logger.error(f"Retrieval error for chapter {chap_id}: {e}")
 
@@ -831,12 +726,10 @@ def get_context_from_request(
                 format_instructions=parser.get_format_instructions()
             )
             
-            # print(f"Input Given to LLM for Question {q_idx + 1} : {final_prompt}")
             response = llm.invoke(final_prompt)
             _record_llm_usage(response)
             cleaned_text = clean_json_string(response.content)
             parsed = json.loads(cleaned_text)
-            # print(f"Output Generated by LLM for Question {q_idx + 1} : {response}")
             
             
             if isinstance(parsed, dict):

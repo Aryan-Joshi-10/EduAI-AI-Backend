@@ -87,7 +87,7 @@ def upload_chunks_to_qdrant(
     return total_points
 
 # ---------------------------------------------------------------------
-# VECTOR SEARCH (FIXED ARGUMENT NAMES)
+# VECTOR SEARCH
 # ---------------------------------------------------------------------
 
 def search_similar_chunks(

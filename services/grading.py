@@ -19,14 +19,6 @@ from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# GEMINI (COMMENTED OUT - REPLACED WITH OPENAI)
-# ---------------------------------------------------------------------------
-# from google.genai import types
-# from dependencies import get_gemini_client
-# import google.generativeai as genai
-# MODEL_NAME = "gemini-3-flash-preview"
-
 # Grading token and API call counter
 _grading_stats = {"input_tokens": 0, "output_tokens": 0, "api_calls": 0}
 
@@ -145,16 +137,6 @@ Page 2 Text:
         try:
             # OpenAI: send prompt + page image for OCR
             response = _grading_openai_generate([prompt, pil_to_part(page)])
-            # ---------------------------------------------------------------------------
-            # OLD GEMINI CODE (COMMENTED OUT)
-            # ---------------------------------------------------------------------------
-            # import google.generativeai as genai
-            # import os
-            # genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-            # model = genai.GenerativeModel("gemini-2.5-flash")
-            # logger.info(f"Processing page {page_num} with Gemini 2.5 Flash...")
-            # response = model.generate_content(prompt)
-            # response = safe_vertex_generate([prompt, pil_to_part(page)])
 
             content = None
             if response and getattr(response, "text", None):
@@ -342,16 +324,6 @@ IMPORTANT: Return ONLY the JSON object, no other text before or after it.
     try:
         # OpenAI: text-only call for mark assignment
         response = _grading_openai_generate([prompt])
-        # ---------------------------------------------------------------------------
-        # OLD GEMINI CODE (COMMENTED OUT)
-        # ---------------------------------------------------------------------------
-        # import google.generativeai as genai
-        # import os
-        # genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        # model = genai.GenerativeModel('gemini-2.5-flash')
-        # response = model.generate_content(prompt)
-        # content = [types.Part(text=prompt)]
-        # response = safe_vertex_generate(content)
 
         if not response or not getattr(response, "text", None):
             logger.warning("No response from OpenAI for mark assignment")
@@ -694,16 +666,6 @@ Return **only valid JSON**:
     try:
         # OpenAI: text-only call for section answer extraction
         response = _grading_openai_generate([prompt])
-        # ---------------------------------------------------------------------------
-        # OLD GEMINI CODE (COMMENTED OUT)
-        # ---------------------------------------------------------------------------
-        # import google.generativeai as genai
-        # import os
-        # genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        # model = genai.GenerativeModel('gemini-2.5-flash')
-        # response = model.generate_content(prompt)
-        # # content = [types.Part(text=prompt)]
-        # # response = safe_vertex_generate(content)
 
         text = None
         if response and getattr(response, "text", None):
@@ -735,99 +697,6 @@ Return **only valid JSON**:
     except Exception as e:
         logger.error(f"Error retrieving section answers: {e}", exc_info=True)
         return {}
-# def retrieve_section_answers(section_title: str, questions: List[Dict], answer_paper: str) -> Dict:
-#     """Uses Vertex AI (Gemini) once per section to extract answers for all questions."""
-#     q_descriptions = []
-#     for q in questions:
-#         q_snippet = q['question'][:50] + "..." if len(q['question']) > 50 else q['question']
-#         q_descriptions.append(f"Q{q['questionNo']}: {q_snippet}")
-    
-#     questions_summary = "\n".join(q_descriptions)
-
-#     prompt = f"""
-# You are an expert exam evaluator extracting answers from a student's handwritten script.
-
-# ### CONTEXT
-# The student's answer sheet contains multiple sections (e.g., Section A, Section B, or Section 1, 2).
-# Question numbers (Q1, Q2...) **repeat** in every section.
-
-# ### YOUR GOAL
-# Extract the answers ONLY for the specific section described below.
-# **Section Title:** "{section_title}"
-# **Questions to find:**
-# {questions_summary}
-
-# ### HANDWRITTEN CONTENT
-# ---
-# {answer_paper}
-# ---
-
-# ### EXTRACTION RULES
-# 1. **Locate the Section:** Scan the handwritten text for headers like "Section 1", "Section A", or look for answers that match the *content* of the questions listed above.
-#    - *Example:* If the questions are MCQs, look for short answers like "a) 4".
-#    - *Example:* If the questions are "Solve the following", look for long steps.
-# 2. **Handle Duplicate Numbers:** Do NOT extract "Q1" from Section 2 if I am asking for "Q1" from Section 1. Use the context of the answer content to disambiguate.
-# 3. **LaTeX Formatting:** - If the answer contains math, format it as LaTeX enclosed in `$ ... $`.
-#    - **CRITICAL:** Use DOUBLE backslashes for commands. Example: Write `$60 \\\\text{{ km/h}}$` (not `\\text`).
-#    - **Multiplication:** Write `$a \\\\times b$` (produces $\times$), NOT `$a \times b$`.
-#    - **Text:** Write `$60 \\\\text{{ km/h}}$`.
-#    - **Fractions:** Write `$\\\\frac{{1}}{{2}}$`.
-#    - If the student wrote "atimesb", correct it to `$a \\\\times b$` if it clearly means multiplication.
-# 4. **Precision:** Extract exactly what is written. Do not correct spelling. If an answer is missing, return an empty string.
-# 5. **PRESERVE NEWLINES (CRITICAL):** - If the answer is written across multiple lines (e.g., steps in a math problem, or points in a theory answer), **you MUST use `\\n`** in the JSON string to represent those line breaks.
-#    - **DO NOT** flatten the text into a single line.
-#    - Example: "Step 1: Formula\\nStep 2: Substitution\\nStep 3: Answer"
-
-# Return **only valid JSON**:
-# {{
-#   "answers": [
-#     {{ "questionNo": "1", "studentAnswer": "..." }},
-#     {{ "questionNo": "2", "studentAnswer": "..." }}
-#   ]
-# }}
-# """
-
-#     try:
-#         # OpenAI: text-only call for section answer extraction
-#         response = _grading_openai_generate([prompt])
-#         # ---------------------------------------------------------------------------
-#         # OLD GEMINI CODE (COMMENTED OUT)
-#         # ---------------------------------------------------------------------------
-#         # import google.generativeai as genai
-#         # import os
-#         # genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-#         # model = genai.GenerativeModel('gemini-2.5-flash')
-#         # response = model.generate_content(prompt)
-#         # content = [types.Part(text=prompt)]
-#         # response = safe_vertex_generate(content)
-
-#         text = None
-#         if response and getattr(response, "text", None):
-#             text = response.text.strip()
-#         if not text:
-#             logger.warning("Empty response from OpenAI for answer extraction")
-#             return {}
-
-#         match = re.search(r"\{[\s\S]*\}", text)
-#         if match:
-#             text = match.group(0)
-
-#         text = clean_json_string(text)
-        
-#         data = json.loads(text)
-#         cleaned_answers = {}
-#         for a in data.get("answers", []):
-#             raw_ans = a.get("studentAnswer", "")
-#             cleaned_answers[a["questionNo"]] = clean_latex_content(raw_ans)
-            
-#         return cleaned_answers
-
-#     except json.JSONDecodeError as e:
-#         logger.error(f"Invalid JSON returned by Vertex AI. Full response:\n{text if 'text' in locals() else 'No response'}")
-#         return {}
-#     except Exception as e:
-#         logger.error(f"Error retrieving section answers: {e}", exc_info=True)
-#         return {}
 
 
 def analyze_chapters_with_llm(report: Dict) -> Dict:
@@ -888,16 +757,6 @@ def analyze_chapters_with_llm(report: Dict) -> Dict:
     try:
         # OpenAI: text-only call for chapter analysis
         response = _grading_openai_generate([prompt])
-        # ---------------------------------------------------------------------------
-        # OLD GEMINI CODE (COMMENTED OUT)
-        # ---------------------------------------------------------------------------
-        # import google.generativeai as genai
-        # import os
-        # genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        # model = genai.GenerativeModel('gemini-2.5-flash')
-        # response = model.generate_content(prompt)
-        # content = [types.Part(text=prompt)]
-        # response = safe_vertex_generate(content)
 
         text = None
         if response and getattr(response, "text", None):
@@ -918,156 +777,7 @@ def analyze_chapters_with_llm(report: Dict) -> Dict:
                 "study_plan": []
             }
         }
-
-
-# def evaluate_answers(question_paper: Dict, answer_paper: str, max_workers: int = 10) -> Dict:
-#     """
-#     Evaluate student's handwritten answers with the official question paper.
-#     Uses parallel processing to evaluate multiple questions concurrently.
     
-#     Args:
-#         question_paper: Dictionary containing the question paper structure
-#         answer_paper: Extracted text from student's handwritten answer sheet (handles answers across different pages)
-#         max_workers: Maximum number of parallel workers for evaluation (default: 10)
-    
-#     Returns:
-#         Dictionary containing evaluation results with chapter-wise analysis and token_usage (input_tokens, output_tokens, api_calls).
-#     """
-#     reset_grading_token_stats()
-#     result = []
-#     total_marks = 0
-#     obtained_marks = 0
-
-#     def evaluate_single_question(q, student_ans):
-#         """Helper function to evaluate a single question"""
-#         try:
-#             logger.info(f"DEBUG Q{q.get('questionNo')}: Keys -> {list(q.keys())}")
-#             q_text = q['question']
-#             marks = q.get('marks', 0)
-#             raw_ans = q.get('correct answer') or q.get('correct_answer') or q.get('correctAnswer')
-#             correct_ans = clean_latex_content(raw_ans)
-#             clean_student_ans = clean_latex_content(student_ans)
-            
-#             evaluation = assign_marks(q_text, correct_ans, clean_student_ans, marks)
-            
-#             logger.debug(f"Evaluation for Q{q['questionNo']}: {evaluation}")
-
-#             try:
-#                 eval_data = json.loads(evaluation) if isinstance(evaluation, str) else evaluation
-#                 score = eval_data.get("awarded_marks", 0)
-#                 remarks = eval_data.get("remarks", "")
-#             except Exception as e:
-#                 logger.warning(f"Error parsing evaluation for Q{q['questionNo']}: {e}")
-#                 score = 0
-#                 remarks = "Invalid response format from AI"
-
-#             return {
-#                 "questionNo": q['questionNo'],
-#                 "question": q_text,
-#                 "marks": marks,
-#                 "chapterNo": q.get('chapterNo', q.get('chapter', 'Unknown')),
-#                 "studentAnswer": clean_student_ans,
-#                 "correctAnswer": correct_ans,
-#                 "awarded": score,
-#                 "remarks": remarks
-#             }
-#         except Exception as e:
-#             logger.error(f"Error evaluating question {q.get('questionNo', 'unknown')}: {e}", exc_info=True)
-#             return {
-#                 "questionNo": q.get('questionNo', ''),
-#                 "question": q.get('question', ''),
-#                 "marks": q.get('marks', 0),
-#                 "chapterNo": q.get('chapterNo', 'Unknown'),
-#                 "studentAnswer": student_ans,
-#                 "correctAnswer": q.get('correct_answer', ''),
-#                 "awarded": 0,
-#                 "remarks": f"Error during evaluation: {str(e)}"
-#             }
-
-#     for section in question_paper['sections']:
-#         sec_title = section.get('sectionTitle') or section.get('sectionName') or section.get('title') or "Untitled Section"
-        
-#         section_result = {"sectionTitle": sec_title, "questions": []}
-
-#         answers_map = retrieve_section_answers(
-#             sec_title, section.get('questions', []), answer_paper
-#         )
-
-#         logger.info(f"Answers Map for section '{sec_title}': {answers_map}")
-
-#         questions_to_evaluate = []
-#         for q in section.get('questions',[]):
-#             student_ans = answers_map.get(q['questionNo'], "")
-#             questions_to_evaluate.append((q, student_ans))
-#             total_marks += q.get('marks', 0)
-
-#         if questions_to_evaluate:
-#             try:
-#                 effective_workers = min(max_workers, len(questions_to_evaluate))
-#                 with concurrent.futures.ThreadPoolExecutor(max_workers=effective_workers) as executor:
-#                     futures = {
-#                         executor.submit(evaluate_single_question, q, student_ans): q
-#                         for q, student_ans in questions_to_evaluate
-#                     }
-                    
-#                     evaluated_questions = []
-#                     for future in concurrent.futures.as_completed(futures):
-#                         try:
-#                             question_result = future.result()
-#                             evaluated_questions.append(question_result)
-#                             obtained_marks += question_result.get("awarded", 0)
-#                         except Exception as e:
-#                             q = futures.get(future, {})
-#                             logger.error(f"Error in future result for question {q.get('questionNo', 'unknown')}: {e}", exc_info=True)
-                    
-#                     evaluated_questions.sort(key=lambda x: x.get("questionNo", ""))
-#                     section_result['questions'] = evaluated_questions
-                    
-#             except Exception as e:
-#                 logger.error(f"Error in parallel evaluation for section '{section['sectionTitle']}': {e}", exc_info=True)
-#                 for q, student_ans in questions_to_evaluate:
-#                     question_result = evaluate_single_question(q, student_ans)
-#                     section_result['questions'].append(question_result)
-#                     obtained_marks += question_result.get("awarded", 0)
-
-#         result.append(section_result)
-
-#     stats = get_grading_token_stats()
-#     final_report = {
-#         "Subject": question_paper["subject"],
-#         "Class": question_paper["className"],
-#         "totalMarks": total_marks,
-#         "obtainedMarks": int(obtained_marks),
-#         "sections": result,
-#         "token_usage": {
-#             "input_tokens": stats["input_tokens"],
-#             "output_tokens": stats["output_tokens"],
-#             "total_tokens": stats["input_tokens"] + stats["output_tokens"],
-#             "api_calls": stats["api_calls"],
-#         },
-#     }
-
-#     logger.info("Running chapter-wise analysis...")
-#     chapter_summary = analyze_chapters_with_llm(final_report)
-#     final_report["chapter_summary"] = chapter_summary
-
-#     # Refresh stats after chapter analysis
-#     final_report["token_usage"] = {
-#         "input_tokens": _grading_stats["input_tokens"],
-#         "output_tokens": _grading_stats["output_tokens"],
-#         "total_tokens": _grading_stats["input_tokens"] + _grading_stats["output_tokens"],
-#         "api_calls": _grading_stats["api_calls"],
-#     }
-#     logger.info(
-#         "Evaluation complete: %s/%s marks. OpenAI: %s calls, %s input tokens, %s output tokens.",
-#         obtained_marks,
-#         total_marks,
-#         _grading_stats["api_calls"],
-#         _grading_stats["input_tokens"],
-#         _grading_stats["output_tokens"],
-#     )
-#     return final_report
-
 
 def evaluate_answers(question_paper: Dict, answer_paper: str) -> Dict:
 
@@ -1191,180 +901,6 @@ def evaluate_answers(question_paper: Dict, answer_paper: str) -> Dict:
     return final_report
 
 
-# def generate_semester_report(request: SemesterReportRequest):
-#     # Prepare context string
-#     try:
-#         eval_context = ""
-#         for idx, ev in enumerate(request.evaluations):
-#             percentage = (ev.get('marks_obtained', 0) / ev.get('total_marks', 1)) * 100
-#             eval_context += f"""
-#             Exam {idx+1}:
-#             - Subject: {ev.get('subject')}
-#             - Exam Type: {ev.get('exam_type')}
-#             - Date: {ev.get('date')}
-#             - Score: {ev.get('marks_obtained')}/{ev.get('total_marks')} ({percentage:.1f}%)
-#             """
-
-#         prompt = f"""
-#         You are an expert academic analyst generating a "Semester Performance Report" for a student named {request.student_name} (Class {request.class_grade}).
-        
-#         Below is the student's performance record for the {request.semester} semester ({request.academic_year}):
-#         {eval_context}
-
-#         ### YOUR TASK:
-#         Analyze this data and generate a structured report similar to professional employability reports (like AMCAT), but focused on school academics.
-        
-#         ### OUTPUT SECTIONS REQUIRED (STRICT JSON):
-#         1. **summary**: A professional paragraph (approx 50 words) summarizing the student's overall performance, consistency, and major achievements.
-#         2. **subject_analysis**: A list of objects, one for each unique subject.
-#            - subject: Name
-#            - score: Average percentage (0-100)
-#            - proficiency: "Basic", "Intermediate", "Advanced", or "Expert"
-#            - insight: A short, personalized comment on their performance in this subject (e.g., "Demonstrates strong conceptual clarity...").
-#         3. **skill_analysis**: Derive 4-5 core academic skills based on the subjects (e.g., "Analytical Thinking" from Math/Science, "Language Comprehension" from English/History).
-#            - skill: Name
-#            - score: Estimated score (0-100) based on relevant subject marks.
-#         4. **recommendations**: 3-4 actionable bullet points for improvement.
-#         5. **highlights**: 2-3 specific areas where the student excelled.
-
-#         ### JSON SCHEMA:
-#         {{
-#           "summary": "...",
-#           "subject_analysis": [
-#             {{ "subject": "Math", "score": 85, "proficiency": "Advanced", "insight": "..." }}
-#           ],
-#           "skill_analysis": [
-#             {{ "skill": "Logical Reasoning", "score": 78 }}
-#           ],
-#           "recommendations": ["...", "..."],
-#           "highlights": ["...", "..."]
-#         }}
-        
-#         Return ONLY valid JSON. No markdown formatting.
-#         """
-#         # import google.generativeai as genai
-
-#         genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))        
-#         model = genai.GenerativeModel("gemini-2.5-flash")
-#         response = safe_vertex_generate([prompt])
-        
-#         if not response or not response.candidates:
-#             raise ValueError("AI failed to generate report")
-
-#         text = response.candidates[0].content.parts[0].text.strip()
-        
-#         # Clean JSON
-#         import re
-#         if "```" in text:
-#             text = re.sub(r"```(?:json)?|```", "", text).strip()
-            
-#         report_data = json.loads(text)
-        
-#         return report_data
-#         # return JSONResponse(content={"success": True, "report": report_data})
-
-#     except Exception as e:
-#         logger.error(f"Semester report error: {e}", exc_info=True)
-#         raise HTTPException(status_code=500, detail=str(e))
-
-
-
-# def generate_semester_report(request: SemesterReportRequest):
-#     try:
-#         subject_map = {}
-
-#         # Build subject-wise performance across exams
-#         for exam_type, records in request.evaluations.items():
-#             for rec in records:
-#                 subject = rec.subject
-#                 percentage = (rec.marks_obtained / rec.total_marks) * 100
-
-#                 if subject not in subject_map:
-#                     subject_map[subject] = []
-
-#                 subject_map[subject].append({
-#                     "exam_type": exam_type,
-#                     "score": percentage
-#                 })
-
-#         # Build context for LLM
-#         subject_context = ""
-#         for subject, performances in subject_map.items():
-#             subject_context += f"\nSubject: {subject}\n"
-#             for p in performances:
-#                 subject_context += f"- {p['exam_type']}: {p['score']:.1f}%\n"
-
-#         prompt = f"""
-# You are an expert academic evaluator generating a **Subject-wise Semester Performance Report**.
-
-# Student Details:
-# - Name: {request.student_name}
-# - Class: {request.class_grade}
-# - Semester: {request.semester}
-# - Academic Year: {request.academic_year}
-
-# Below is the student's performance across different assessments:
-
-# {subject_context}
-
-# ### TASK:
-# Generate **deep insights for EACH SUBJECT**, analyzing performance across:
-# - Unit Test
-# - Mid Term
-# - Final Exam
-
-# ### INSIGHTS MUST INCLUDE:
-# For each subject:
-# 1. Competency demonstrated (e.g., problem-solving, conceptual clarity)
-# 2. Topics typically assessed in this subject
-# 3. Performance trend (improving / consistent / declining)
-# 4. Level of mastery: Basic / Intermediate / Advanced / Expert
-
-# ### OUTPUT FORMAT (STRICT JSON):
-# {{
-#   "summary": "...",
-#   "subject_insights": [
-#     {{
-#       "subject": "Data Structures and Algorithms",
-#       "average_score": 85,
-#       "performance_trend": "Improving",
-#       "competency": "Algorithmic thinking and problem solving",
-#       "topics_covered": ["Arrays", "Linked Lists", "Trees", "Time Complexity"],
-#       "performance_level": "Advanced",
-#       "insight": "Shows steady improvement from Unit Test to Final Exam..."
-#     }}
-#   ],
-#   "recommendations": [
-#     "...",
-#     "..."
-#   ],
-#   "strengths": [
-#     "...",
-#     "..."
-#   ]
-# }}
-
-# Return ONLY valid JSON. No markdown. No explanations.
-# """
-
-#         genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-#         response = safe_vertex_generate([prompt])
-
-#         if not response or not response.candidates:
-#             raise ValueError("AI failed to generate report")
-
-#         text = response.candidates[0].content.parts[0].text.strip()
-
-#         import re, json
-#         if "```" in text:
-#             text = re.sub(r"```(?:json)?|```", "", text).strip()
-
-#         return json.loads(text)
-
-#     except Exception as e:
-#         logger.error(f"Semester report generation error: {e}", exc_info=True)
-#         raise HTTPException(status_code=500, detail=str(e))
-
 def generate_semester_report(request: SemesterReportRequest):
     try:
         subject_map = {}
@@ -1452,14 +988,6 @@ No explanations.
 
         # OpenAI: text-only call for semester report
         response = _grading_openai_generate([prompt])
-        # ---------------------------------------------------------------------------
-        # OLD GEMINI CODE (COMMENTED OUT)
-        # ---------------------------------------------------------------------------
-        # genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-        # response = safe_vertex_generate([prompt])
-        # if not response or not response.candidates:
-        #     raise ValueError("AI failed to generate report")
-        # text = response.candidates[0].content.parts[0].text.strip()
 
         if not response or not getattr(response, "text", None):
             raise ValueError("AI failed to generate report")
